@@ -241,6 +241,31 @@ namespace RFramework
             CancellationToken ct = default);
 
         /// <summary>
+        /// 将 HTTP 响应流写入文件，并返回状态码与响应头。
+        /// 此接口是下载模块使用的底层能力，不负责重试、校验或最终文件提交。
+        /// </summary>
+        /// <param name="url">下载 URL。</param>
+        /// <param name="savePath">写入路径，通常为 .part 临时文件。</param>
+        /// <param name="offset">续传起始字节；大于 0 时自动发送 Range 请求并追加写入。</param>
+        /// <param name="progress">文件字节进度报告器，可为 null。</param>
+        /// <param name="headers">附加请求头，可为 null；Range 由模块统一设置。</param>
+        /// <param name="tag">请求标签。</param>
+        /// <param name="priority">请求优先级。</param>
+        /// <param name="timeoutMs">请求超时毫秒数；0 表示不启用总时长超时。</param>
+        /// <param name="ct">取消令牌。</param>
+        /// <returns>HTTP 响应。</returns>
+        Task<WebResponse> DownloadFileRangeAsync(
+            string url,
+            string savePath,
+            long offset,
+            IProgress<WebDownloadProgress> progress = null,
+            Dictionary<string, string> headers = null,
+            string tag = null,
+            uint priority = 0,
+            int timeoutMs = 0,
+            CancellationToken ct = default);
+
+        /// <summary>
         /// GET 请求并直接返回 JSON 反序列化后的对象。
         /// 便捷包装：自动设置 Accept: application/json，失败时抛出异常。
         /// </summary>

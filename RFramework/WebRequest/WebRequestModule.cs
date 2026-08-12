@@ -403,7 +403,87 @@ namespace RFramework
                 TimeoutMs = defaultTimeoutMs
             };
 
-            await SendCoreDownloadAsync(request, savePath, progress, ct);
+            try
+            {
+                IProgress<WebDownloadProgress> byteProgress = progress == null
+                    ? null
+                    : new FileProgressAdapter(progress);
+                WebResponse response = await SendCoreDownloadAsync(request, savePath, false, byteProgress, ct);
+                if (response == null || !response.IsSuccess)
+                {
+                    throw new RFrameworkException(string.Format(
+                        "WebRequestModule: download file failed, status={0}, error={1}",
+                        response?.StatusCode ?? 0,
+                        response?.ErrorMessage ?? "No response"));
+                }
+            }
+            catch (OperationCanceledException ex)
+            {
+                TryDeleteFile(savePath);
+                throw new RFrameworkException("WebRequestModule: download file cancelled or timeout.", ex);
+            }
+            catch
+            {
+                TryDeleteFile(savePath);
+                throw;
+            }
+        }
+
+        /// <inheritdoc/>
+        public Task<WebResponse> DownloadFileRangeAsync(
+            string url,
+            string savePath,
+            long offset,
+            IProgress<WebDownloadProgress> progress = null,
+            Dictionary<string, string> headers = null,
+            string tag = null,
+            uint priority = 0,
+            int timeoutMs = 0,
+            CancellationToken ct = default)
+        {
+            if (string.IsNullOrWhiteSpace(url))
+            {
+                throw new RFrameworkException("WebRequestModule: url is invalid.");
+            }
+
+            if (string.IsNullOrWhiteSpace(savePath))
+            {
+                throw new RFrameworkException("WebRequestModule: savePath is invalid.");
+            }
+
+            if (offset < 0)
+            {
+                throw new RFrameworkException("WebRequestModule: offset must be >= 0.");
+            }
+
+            if (timeoutMs < 0)
+            {
+                throw new RFrameworkException("WebRequestModule: timeoutMs must be >= 0.");
+            }
+
+            Dictionary<string, string> requestHeaders = headers == null
+                ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                : new Dictionary<string, string>(headers, StringComparer.OrdinalIgnoreCase);
+            if (offset > 0)
+            {
+                requestHeaders["Range"] = string.Format("bytes={0}-", offset);
+            }
+            else
+            {
+                requestHeaders.Remove("Range");
+            }
+
+            WebRequestData request = new WebRequestData
+            {
+                Url = url,
+                Method = HttpMethod.Get,
+                Headers = requestHeaders,
+                Tag = tag,
+                Priority = priority,
+                TimeoutMs = timeoutMs
+            };
+
+            return SendCoreDownloadAsync(request, savePath, offset > 0, progress, ct);
         }
 
         /// <inheritdoc/>
@@ -796,10 +876,11 @@ namespace RFramework
         /// 流式下载核心：受优先级调度器并发控制，直接写入磁盘。
         /// 不支持重试（大文件重试浪费流量）。
         /// </summary>
-        private async Task SendCoreDownloadAsync(
+        private async Task<WebResponse> SendCoreDownloadAsync(
             WebRequestData request,
             string savePath,
-            IProgress<float> progress,
+            bool append,
+            IProgress<WebDownloadProgress> progress,
             CancellationToken userCt)
         {
             if (helper == null)
@@ -841,22 +922,7 @@ namespace RFramework
                 acquiredSlot = true;
                 tracked.SetActive(true);
 
-                await helper.DownloadFileAsync(request, savePath, progress, linkedCts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                // 清理下载中的半成品文件
-                if (!userCt.IsCancellationRequested && !(mainCts?.IsCancellationRequested ?? false))
-                {
-                    try { System.IO.File.Delete(savePath); } catch { }
-                }
-
-                throw new RFrameworkException("WebRequestModule: download file cancelled or timeout.");
-            }
-            catch (Exception)
-            {
-                try { System.IO.File.Delete(savePath); } catch { }
-                throw;
+                return await helper.DownloadFileAsync(request, savePath, append, progress, linkedCts.Token);
             }
             finally
             {
@@ -875,6 +941,36 @@ namespace RFramework
                         trackedRequests.Remove(tracked);
                     }
                 }
+            }
+        }
+
+        private static void TryDeleteFile(string path)
+        {
+            try
+            {
+                if (System.IO.File.Exists(path))
+                {
+                    System.IO.File.Delete(path);
+                }
+            }
+            catch
+            {
+                // 原始下载 API 保持尽力清理语义，删除失败不覆盖主异常。
+            }
+        }
+
+        private sealed class FileProgressAdapter : IProgress<WebDownloadProgress>
+        {
+            private readonly IProgress<float> progress;
+
+            public FileProgressAdapter(IProgress<float> progress)
+            {
+                this.progress = progress;
+            }
+
+            public void Report(WebDownloadProgress value)
+            {
+                progress.Report(value?.Progress ?? 0f);
             }
         }
 
