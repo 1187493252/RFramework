@@ -11,6 +11,11 @@ namespace RFramework
     public interface IDownloadModule
     {
         /// <summary>
+        /// 设置压缩文件解压辅助器。传入 null 时恢复默认 ZIP 实现。
+        /// </summary>
+        void SetArchiveHelper(IArchiveHelper helper);
+
+        /// <summary>
         /// 下载文件到指定路径。
         /// 取消或网络失败时保留 .part 文件，后续调用可继续下载。
         /// </summary>

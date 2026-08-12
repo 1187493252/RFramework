@@ -7,6 +7,9 @@ namespace RFramework
     /// </summary>
     public sealed class DownloadProgress
     {
+        /// <summary>获取当前任务阶段。</summary>
+        public DownloadStage Stage { get; }
+
         /// <summary>获取当前已写入临时文件的总字节数。</summary>
         public long DownloadedBytes { get; }
 
@@ -27,6 +30,9 @@ namespace RFramework
         /// <summary>获取当前是否正在续传已有分片。</summary>
         public bool IsResuming { get; }
 
+        /// <summary>获取当前正在处理的压缩条目；非解压阶段为 null。</summary>
+        public string CurrentEntry { get; }
+
         /// <summary>
         /// 初始化下载进度。
         /// </summary>
@@ -35,13 +41,17 @@ namespace RFramework
             long totalBytes,
             double bytesPerSecond,
             TimeSpan? estimatedRemaining,
-            bool isResuming)
+            bool isResuming,
+            DownloadStage stage = DownloadStage.Downloading,
+            string currentEntry = null)
         {
+            Stage = stage;
             DownloadedBytes = downloadedBytes;
             TotalBytes = totalBytes;
             BytesPerSecond = bytesPerSecond;
             EstimatedRemaining = estimatedRemaining;
             IsResuming = isResuming;
+            CurrentEntry = currentEntry;
         }
     }
 }

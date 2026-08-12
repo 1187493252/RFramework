@@ -35,8 +35,10 @@ namespace RFramework
         /// <param name="assetType">资源类型</param>
         /// <param name="priority">加载优先级（越大越优先）</param>
         /// <param name="ct">取消令牌，调用方已取消时应尽早中止底层加载</param>
+        /// <param name="onProgress">加载进度回调（0~1），可为 null。</param>
         /// <returns>加载的资源对象</returns>
-        Task<object> LoadAssetAsync(string location, Type assetType, uint priority, CancellationToken ct = default);
+        Task<object> LoadAssetAsync(string location, Type assetType, uint priority,
+            CancellationToken ct = default, IProgress<float> onProgress = null);
 
         /// <summary>
         /// 同步加载资源并返回原始对象。

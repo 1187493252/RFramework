@@ -4,15 +4,15 @@ using System.Globalization;
 namespace RFramework
 {
     /// <summary>
-    /// Library 层日志桥接入口。具体输出由 Runtime 安装的 <see cref="ILogSink"/> 提供。
+    /// Library 层日志桥接入口。具体输出由 Runtime 安装的 <see cref="ILogHelper"/> 提供。
     /// </summary>
     public static class RFrameworkLog
     {
         private static readonly object Gate = new object();
-        private static ILogSink sink;
+        private static ILogHelper helper;
 
         /// <summary>
-        /// 获取当前是否已安装日志接收器。
+        /// 获取当前是否已安装日志辅助器。
         /// </summary>
         public static bool IsInitialized
         {
@@ -20,62 +20,62 @@ namespace RFramework
             {
                 lock (Gate)
                 {
-                    return sink != null;
+                    return helper != null;
                 }
             }
         }
 
         /// <summary>
-        /// 安装日志接收器，并释放之前的接收器。
+        /// 安装日志辅助器，并释放之前的辅助器。
         /// </summary>
-        /// <param name="value">新的日志接收器。</param>
-        public static void SetSink(ILogSink value)
+        /// <param name="value">新的日志辅助器。</param>
+        public static void SetHelper(ILogHelper value)
         {
             if (value == null)
             {
-                throw new RFrameworkException("Log sink cannot be null.");
+                throw new RFrameworkException("Log helper cannot be null.");
             }
 
-            ILogSink previous;
+            ILogHelper previous;
             lock (Gate)
             {
-                previous = sink;
-                sink = value;
+                previous = helper;
+                helper = value;
             }
 
             if (!ReferenceEquals(previous, value))
             {
-                DisposeSink(previous);
+                DisposeHelper(previous);
             }
         }
 
         /// <summary>
-        /// 移除并释放当前日志接收器。
+        /// 移除并释放当前日志辅助器。
         /// </summary>
         public static void Clear()
         {
-            ILogSink previous;
+            ILogHelper previous;
             lock (Gate)
             {
-                previous = sink;
-                sink = null;
+                previous = helper;
+                helper = null;
             }
 
-            DisposeSink(previous);
+            DisposeHelper(previous);
         }
 
         /// <summary>
-        /// 写入一条日志；未安装接收器时抛出框架异常。
+        /// 写入一条日志；未安装辅助器时抛出框架异常。
         /// </summary>
         /// <param name="level">日志级别。</param>
         /// <param name="message">日志内容。</param>
         public static void Write(LogLevel level, object message)
         {
-            GetRequiredSink().Write(level, message?.ToString() ?? "null");
+            GetRequiredHelper().Write(level, message?.ToString() ?? "null");
         }
 
         /// <summary>
-        /// 格式化并写入一条日志；未安装接收器时抛出框架异常。
+        /// 格式化并写入一条日志；未安装辅助器时抛出框架异常。
         /// </summary>
         /// <param name="level">日志级别。</param>
         /// <param name="format">复合格式字符串。</param>
@@ -87,16 +87,16 @@ namespace RFramework
                 throw new RFrameworkException("Log format cannot be null.");
             }
 
-            GetRequiredSink().Write(
+            GetRequiredHelper().Write(
                 level, string.Format(CultureInfo.InvariantCulture, format, args));
         }
 
         /// <summary>
-        /// 尝试写入日志。框架尚未启动、已经关闭或接收器失败时返回 false。
+        /// 尝试写入日志。框架尚未启动、已经关闭或辅助器失败时返回 false。
         /// </summary>
         /// <param name="level">日志级别。</param>
         /// <param name="message">日志内容。</param>
-        /// <returns>成功交给接收器时返回 true。</returns>
+        /// <returns>成功交给辅助器时返回 true。</returns>
         public static bool TryWrite(LogLevel level, object message)
         {
             return TryWriteCore(level, message?.ToString() ?? "null");
@@ -108,7 +108,7 @@ namespace RFramework
         /// <param name="level">日志级别。</param>
         /// <param name="format">复合格式字符串。</param>
         /// <param name="args">格式化参数。</param>
-        /// <returns>成功交给接收器时返回 true。</returns>
+        /// <returns>成功交给辅助器时返回 true。</returns>
         public static bool TryWrite(LogLevel level, string format, params object[] args)
         {
             if (format == null)
@@ -129,21 +129,21 @@ namespace RFramework
             return TryWriteCore(level, message);
         }
 
-        private static ILogSink GetRequiredSink()
+        private static ILogHelper GetRequiredHelper()
         {
             lock (Gate)
             {
-                return sink ?? throw new RFrameworkException(
-                    "No log sink is installed. Initialize the framework before writing logs.");
+                return helper ?? throw new RFrameworkException(
+                    "No log helper is installed. Initialize the framework before writing logs.");
             }
         }
 
         private static bool TryWriteCore(LogLevel level, string message)
         {
-            ILogSink current;
+            ILogHelper current;
             lock (Gate)
             {
-                current = sink;
+                current = helper;
             }
 
             if (current == null)
@@ -162,7 +162,7 @@ namespace RFramework
             }
         }
 
-        private static void DisposeSink(ILogSink value)
+        private static void DisposeHelper(ILogHelper value)
         {
             if (value == null)
             {
@@ -175,7 +175,7 @@ namespace RFramework
             }
             catch
             {
-                // 日志后端关闭失败不能阻止框架继续替换或清理全局接收器。
+                // 日志后端关闭失败不能阻止框架继续替换或清理全局辅助器。
             }
         }
     }

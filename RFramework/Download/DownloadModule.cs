@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
@@ -24,6 +23,7 @@ namespace RFramework
                     ? StringComparer.OrdinalIgnoreCase
                     : StringComparer.Ordinal);
         private readonly CancellationTokenSource stopCts = new CancellationTokenSource();
+        private IArchiveHelper archiveHelper = new DefaultZipArchiveHelper();
         private bool stopped;
 
         /// <inheritdoc />
@@ -56,6 +56,20 @@ namespace RFramework
 
                     return total;
                 }
+            }
+        }
+
+        /// <inheritdoc />
+        public void SetArchiveHelper(IArchiveHelper helper)
+        {
+            lock (syncRoot)
+            {
+                if (stopped)
+                {
+                    throw new RFrameworkException("DownloadModule: module is stopped.");
+                }
+
+                archiveHelper = helper ?? new DefaultZipArchiveHelper();
             }
         }
 
@@ -174,6 +188,7 @@ namespace RFramework
             CancellationToken ct)
         {
             IWebRequestModule webRequest = RFrameworkModuleHost.Get<IWebRequestModule>();
+            await ValidateRemoteSizeAsync(url, options, progress, webRequest, ct);
             int requestCount = 0;
             int remainingRetries = options.MaxRetries;
             bool resumed = false;
@@ -232,7 +247,8 @@ namespace RFramework
                         if (await IsValidFileAsync(partialPath, options, ct))
                         {
                             CommitPartialFile(partialPath, fullPath, options.OverwriteExisting);
-                            return await CompleteDownloadAsync(fullPath, options, resumed, requestCount, ct);
+                            return await CompleteDownloadAsync(
+                                fullPath, options, resumed, requestCount, progress, ct);
                         }
 
                         File.Delete(partialPath);
@@ -258,6 +274,13 @@ namespace RFramework
 
                     try
                     {
+                        progress?.Report(new DownloadProgress(
+                            0L,
+                            options.ExpectedSize,
+                            0d,
+                            null,
+                            resumed,
+                            DownloadStage.Verifying));
                         await ValidateFileAsync(partialPath, options, ct);
                     }
                     catch (RFrameworkException)
@@ -266,7 +289,8 @@ namespace RFramework
                         throw;
                     }
                     CommitPartialFile(partialPath, fullPath, options.OverwriteExisting);
-                    return await CompleteDownloadAsync(fullPath, options, resumed, requestCount, ct);
+                    return await CompleteDownloadAsync(
+                        fullPath, options, resumed, requestCount, progress, ct);
                 }
                 catch (OperationCanceledException)
                 {
@@ -310,6 +334,78 @@ namespace RFramework
             return dash > 6
                 && long.TryParse(value.Substring(6, dash - 6), out long actualStart)
                 && actualStart == expectedStart;
+        }
+
+        private static async Task ValidateRemoteSizeAsync(
+            string url,
+            DownloadOptions options,
+            IProgress<DownloadProgress> progress,
+            IWebRequestModule webRequest,
+            CancellationToken ct)
+        {
+            if (!options.PreflightRemoteSize || options.ExpectedSize < 0)
+            {
+                return;
+            }
+
+            progress?.Report(new DownloadProgress(
+                0L,
+                options.ExpectedSize,
+                0d,
+                null,
+                false,
+                DownloadStage.Preflight));
+
+            try
+            {
+                WebResponse response = await webRequest.SendAsync(
+                    new WebRequestData
+                    {
+                        Url = url,
+                        Method = HttpMethod.Head,
+                        Headers = options.Headers == null
+                            ? null
+                            : new Dictionary<string, string>(options.Headers),
+                        TimeoutMs = options.RequestTimeoutMilliseconds,
+                        Tag = options.Tag,
+                        Priority = options.Priority
+                    },
+                    ct: ct);
+
+                string contentEncoding = response.GetHeader("Content-Encoding");
+                if (!response.IsSuccess
+                    || (!string.IsNullOrWhiteSpace(contentEncoding)
+                        && !string.Equals(contentEncoding, "identity", StringComparison.OrdinalIgnoreCase))
+                    || !long.TryParse(response.GetHeader("Content-Length"), out long remoteSize))
+                {
+                    return;
+                }
+
+                if (remoteSize != options.ExpectedSize)
+                {
+                    throw new RFrameworkException(string.Format(
+                        "DownloadModule: remote size verification failed before download. Expected size {0}, remote size {1}.",
+                        options.ExpectedSize,
+                        remoteSize));
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (RFrameworkException ex) when (
+                ex.Message.IndexOf("remote size verification failed", StringComparison.OrdinalIgnoreCase) < 0)
+            {
+                // HEAD 预检不受支持或失败时，降级为下载完成后的实际文件校验。
+            }
+            catch (RFrameworkException)
+            {
+                throw;
+            }
+            catch (Exception)
+            {
+                // HEAD 仅用于提前失败优化，不能成为下载的额外单点依赖。
+            }
         }
 
         private static async Task ValidateFileAsync(
@@ -432,11 +528,12 @@ namespace RFramework
             }
         }
 
-        private static async Task<DownloadResult> CompleteDownloadAsync(
+        private async Task<DownloadResult> CompleteDownloadAsync(
             string path,
             DownloadOptions options,
             bool resumed,
             int requestCount,
+            IProgress<DownloadProgress> progress,
             CancellationToken ct)
         {
             long fileSize = new FileInfo(path).Length;
@@ -446,7 +543,13 @@ namespace RFramework
             }
 
             string extractDirectory = Path.GetFullPath(options.ExtractDirectory);
-            await ExtractZipAsync(path, extractDirectory, options, ct);
+            IArchiveHelper helper;
+            lock (syncRoot)
+            {
+                helper = archiveHelper;
+            }
+
+            await ExtractArchiveAsync(path, extractDirectory, options, helper, progress, ct);
             if (options.DeleteArchiveAfterExtraction)
             {
                 File.Delete(path);
@@ -456,10 +559,12 @@ namespace RFramework
                 path, fileSize, resumed, requestCount, true, extractDirectory);
         }
 
-        private static async Task ExtractZipAsync(
+        private static async Task ExtractArchiveAsync(
             string archivePath,
             string destinationDirectory,
             DownloadOptions options,
+            IArchiveHelper helper,
+            IProgress<DownloadProgress> progress,
             CancellationToken ct)
         {
             string temporaryDirectory = destinationDirectory + ".extracting." + Guid.NewGuid().ToString("N");
@@ -467,68 +572,19 @@ namespace RFramework
             bool destinationMoved = false;
             try
             {
-                Directory.CreateDirectory(temporaryDirectory);
-                string root = EnsureTrailingSeparator(Path.GetFullPath(temporaryDirectory));
-                StringComparison pathComparison = Path.DirectorySeparatorChar == '\\'
-                    ? StringComparison.OrdinalIgnoreCase
-                    : StringComparison.Ordinal;
-
-                using (FileStream archiveStream = new FileStream(
-                    archivePath, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, true))
-                using (ZipArchive archive = new ZipArchive(archiveStream, ZipArchiveMode.Read, false))
-                {
-                    if (options.MaxArchiveEntries > 0 && archive.Entries.Count > options.MaxArchiveEntries)
+                IProgress<ArchiveProgress> archiveProgress = progress == null
+                    ? null
+                    : new ArchiveProgressAdapter(progress);
+                await helper.ExtractAsync(
+                    archivePath,
+                    temporaryDirectory,
+                    new ArchiveExtractionOptions
                     {
-                        throw new RFrameworkException(
-                            $"DownloadModule: ZIP contains too many entries ({archive.Entries.Count}).");
-                    }
-
-                    long totalExtractedBytes = 0L;
-                    byte[] buffer = new byte[81920];
-                    foreach (ZipArchiveEntry entry in archive.Entries)
-                    {
-                        ct.ThrowIfCancellationRequested();
-                        totalExtractedBytes = checked(totalExtractedBytes + entry.Length);
-                        if (options.MaxExtractedBytes > 0 && totalExtractedBytes > options.MaxExtractedBytes)
-                        {
-                            throw new RFrameworkException(
-                                "DownloadModule: ZIP extracted size exceeds the configured limit.");
-                        }
-
-                        string entryPath = Path.GetFullPath(Path.Combine(root, entry.FullName));
-                        if (!entryPath.StartsWith(root, pathComparison))
-                        {
-                            throw new RFrameworkException(
-                                $"DownloadModule: unsafe ZIP entry path '{entry.FullName}'.");
-                        }
-
-                        bool isDirectory = string.IsNullOrEmpty(entry.Name)
-                            || entry.FullName.EndsWith("/", StringComparison.Ordinal)
-                            || entry.FullName.EndsWith("\\", StringComparison.Ordinal);
-                        if (isDirectory)
-                        {
-                            Directory.CreateDirectory(entryPath);
-                            continue;
-                        }
-
-                        string parent = Path.GetDirectoryName(entryPath);
-                        if (!string.IsNullOrEmpty(parent))
-                        {
-                            Directory.CreateDirectory(parent);
-                        }
-
-                        using (Stream input = entry.Open())
-                        using (FileStream output = new FileStream(
-                            entryPath, FileMode.Create, FileAccess.Write, FileShare.None, 81920, true))
-                        {
-                            int read;
-                            while ((read = await input.ReadAsync(buffer, 0, buffer.Length, ct)) > 0)
-                            {
-                                await output.WriteAsync(buffer, 0, read, ct);
-                            }
-                        }
-                    }
-                }
+                        MaxEntries = options.MaxArchiveEntries,
+                        MaxExtractedBytes = options.MaxExtractedBytes
+                    },
+                    archiveProgress,
+                    ct);
 
                 string destinationParent = Path.GetDirectoryName(destinationDirectory);
                 if (!string.IsNullOrEmpty(destinationParent))
@@ -584,13 +640,6 @@ namespace RFramework
 
             TryDeleteDirectory(destinationDirectory);
             Directory.Move(backupDirectory, destinationDirectory);
-        }
-
-        private static string EnsureTrailingSeparator(string path)
-        {
-            return path.EndsWith(Path.DirectorySeparatorChar.ToString(), StringComparison.Ordinal)
-                ? path
-                : path + Path.DirectorySeparatorChar;
         }
 
         private static void TryDeleteDirectory(string path)
@@ -702,6 +751,33 @@ namespace RFramework
                     : (TimeSpan?)null;
                 progress?.Report(new DownloadProgress(
                     value.DownloadedBytes, total, speed, remaining, isResuming));
+            }
+        }
+
+        private sealed class ArchiveProgressAdapter : IProgress<ArchiveProgress>
+        {
+            private readonly IProgress<DownloadProgress> progress;
+
+            public ArchiveProgressAdapter(IProgress<DownloadProgress> progress)
+            {
+                this.progress = progress;
+            }
+
+            public void Report(ArchiveProgress value)
+            {
+                if (value == null)
+                {
+                    return;
+                }
+
+                progress.Report(new DownloadProgress(
+                    value.ProcessedBytes,
+                    value.TotalBytes,
+                    0d,
+                    null,
+                    false,
+                    DownloadStage.Extracting,
+                    value.EntryName));
             }
         }
     }

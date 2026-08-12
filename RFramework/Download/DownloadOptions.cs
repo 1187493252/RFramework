@@ -25,6 +25,12 @@ namespace RFramework
         /// <summary>预期文件大小；小于 0 表示不校验。</summary>
         public long ExpectedSize { get; set; } = -1;
 
+        /// <summary>
+        /// 有预期大小时是否先通过 HEAD 尝试预检远端大小，默认为 true。
+        /// 远端不提供长度或不支持 HEAD 时继续下载，完成后仍执行实际文件校验。
+        /// </summary>
+        public bool PreflightRemoteSize { get; set; } = true;
+
         /// <summary>预期 SHA-256 十六进制字符串；空表示不校验。</summary>
         public string ExpectedSha256 { get; set; }
 

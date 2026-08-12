@@ -47,7 +47,9 @@ namespace RFramework
         /// <param name="location">资源路径（如 "Assets/Prefabs/Player.prefab"）</param>
         /// <param name="priority">加载优先级（越大越优先）</param>
         /// <param name="ct">取消令牌</param>
-        Task<T> LoadAssetAsync<T>(string location, uint priority = 0, CancellationToken ct = default)
+        /// <param name="onProgress">加载进度回调（0~1），可为 null。</param>
+        Task<T> LoadAssetAsync<T>(string location, uint priority = 0, CancellationToken ct = default,
+            IProgress<float> onProgress = null)
             where T : class;
 
         /// <summary>

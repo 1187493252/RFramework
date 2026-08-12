@@ -5,7 +5,7 @@ namespace RFramework
     /// <summary>
     /// 接收框架已经格式化完成的日志消息。
     /// </summary>
-    public interface ILogSink : IDisposable
+    public interface ILogHelper : IDisposable
     {
         /// <summary>
         /// 写入一条日志。

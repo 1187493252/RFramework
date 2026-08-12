@@ -262,9 +262,10 @@ namespace RFramework
         /// <param name="location">资源路径。</param>
         /// <param name="priority">加载优先级（越大越优先）。</param>
         /// <param name="ct">取消令牌。</param>
+        /// <param name="onProgress">加载进度回调（0~1），可为 null。</param>
         /// <returns>加载的资源对象。</returns>
         public async Task<T> LoadAssetAsync<T>(string location, uint priority = 0,
-            CancellationToken ct = default) where T : class
+            CancellationToken ct = default, IProgress<float> onProgress = null) where T : class
         {
             EnsureInitialized();
 
@@ -291,6 +292,7 @@ namespace RFramework
                 if (loadedAssets.TryGetValue(key, out CachedAsset cached))
                 {
                     cached.RefCount++;
+                    onProgress?.Report(1f);
                     return cached.Asset as T;
                 }
 
@@ -309,6 +311,7 @@ namespace RFramework
             // 等待者：仅操作本等待者 TCS，注册调用方与模块两层令牌，互不干扰共享加载
             if (waitTcs != null)
             {
+                onProgress?.Report(0f);
                 using (ct.Register(() => waitTcs.TrySetCanceled()))
                 using (moduleCts.Token.Register(() => waitTcs.TrySetCanceled()))
                 {
@@ -320,6 +323,7 @@ namespace RFramework
                             result.RefCount++;
                         }
 
+                        onProgress?.Report(1f);
                         return result.Asset as T;
                     }
                     catch (OperationCanceledException)
@@ -346,7 +350,8 @@ namespace RFramework
             try
             {
                 // 透传 effectiveCt：调用方或模块关闭取消时由底层在合适时机抛出
-                object asset = await helper.LoadAssetAsync(location, assetType, priority, effectiveCt);
+                object asset = await helper.LoadAssetAsync(
+                    location, assetType, priority, effectiveCt, onProgress);
 
                 // 底层加载完成后才发生取消/关闭：释放资源并抛取消，避免写回已清空的缓存（缓存"复活"）
                 if (isShutdown || ct.IsCancellationRequested || moduleCts.IsCancellationRequested)
