@@ -7,10 +7,11 @@ using System.Threading.Tasks;
 namespace RFramework
 {
     /// <summary>
-    /// 基于 System.IO.Compression 的默认 ZIP 解压辅助器。
+    /// 基于 System.IO.Compression 的默认压缩文件解压辅助器。
+    /// 仅支持未加密 ZIP；Auto 按 ZIP 处理，其他格式明确拒绝。
     /// 纯文件和解压工作在线程池执行，避免逐块续接 Unity 主线程。
     /// </summary>
-    public sealed class DefaultZipArchiveHelper : IArchiveHelper
+    public sealed class DefaultArchiveHelper : IArchiveHelper
     {
         private const int BufferSize = 1024 * 1024;
 
@@ -24,7 +25,19 @@ namespace RFramework
         {
             if (options == null)
             {
-                throw new RFrameworkException("DefaultZipArchiveHelper: options cannot be null.");
+                throw new RFrameworkException("DefaultArchiveHelper: options cannot be null.");
+            }
+
+            if (options.Format != ArchiveFormat.Auto && options.Format != ArchiveFormat.Zip)
+            {
+                throw new RFrameworkException(
+                    $"DefaultArchiveHelper: archive format '{options.Format}' is not supported.");
+            }
+
+            if (!string.IsNullOrEmpty(options.Password))
+            {
+                throw new RFrameworkException(
+                    "DefaultArchiveHelper: encrypted ZIP is not supported.");
             }
 
             return Task.Run(
@@ -53,7 +66,7 @@ namespace RFramework
                 if (options.MaxEntries > 0 && totalEntries > options.MaxEntries)
                 {
                     throw new RFrameworkException(
-                        $"DefaultZipArchiveHelper: ZIP contains too many entries ({totalEntries}).");
+                        $"DefaultArchiveHelper: ZIP contains too many entries ({totalEntries}).");
                 }
 
                 long totalBytes = 0L;
@@ -63,7 +76,7 @@ namespace RFramework
                     if (options.MaxExtractedBytes > 0 && totalBytes > options.MaxExtractedBytes)
                     {
                         throw new RFrameworkException(
-                            "DefaultZipArchiveHelper: ZIP extracted size exceeds the configured limit.");
+                            "DefaultArchiveHelper: ZIP extracted size exceeds the configured limit.");
                     }
                 }
 
@@ -73,11 +86,12 @@ namespace RFramework
                 {
                     ct.ThrowIfCancellationRequested();
                     ZipArchiveEntry entry = archive.Entries[entryIndex];
-                    string entryPath = Path.GetFullPath(Path.Combine(root, entry.FullName));
+                    string normalized = NormalizeEntryName(entry.FullName);
+                    string entryPath = Path.GetFullPath(Path.Combine(root, normalized));
                     if (!entryPath.StartsWith(root, comparison))
                     {
                         throw new RFrameworkException(
-                            $"DefaultZipArchiveHelper: unsafe ZIP entry path '{entry.FullName}'.");
+                            $"DefaultArchiveHelper: unsafe ZIP entry path '{entry.FullName}'.");
                     }
 
                     bool isDirectory = string.IsNullOrEmpty(entry.Name)
@@ -124,6 +138,25 @@ namespace RFramework
             return path.EndsWith(Path.DirectorySeparatorChar.ToString(), StringComparison.Ordinal)
                 ? path
                 : path + Path.DirectorySeparatorChar;
+        }
+
+        private static string NormalizeEntryName(string entryName)
+        {
+            if (string.IsNullOrWhiteSpace(entryName))
+            {
+                throw new RFrameworkException("DefaultArchiveHelper: ZIP entry name is empty.");
+            }
+
+            string normalized = entryName
+                .Replace('\\', Path.DirectorySeparatorChar)
+                .Replace('/', Path.DirectorySeparatorChar);
+            if (normalized.IndexOf(':') >= 0)
+            {
+                throw new RFrameworkException(
+                    $"DefaultArchiveHelper: unsafe ZIP entry path '{entryName}'.");
+            }
+
+            return normalized;
         }
     }
 }

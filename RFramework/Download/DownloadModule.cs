@@ -23,7 +23,7 @@ namespace RFramework
                     ? StringComparer.OrdinalIgnoreCase
                     : StringComparer.Ordinal);
         private readonly CancellationTokenSource stopCts = new CancellationTokenSource();
-        private IArchiveHelper archiveHelper = new DefaultZipArchiveHelper();
+        private IArchiveHelper archiveHelper = new DefaultArchiveHelper();
         private bool stopped;
 
         /// <inheritdoc />
@@ -69,7 +69,7 @@ namespace RFramework
                     throw new RFrameworkException("DownloadModule: module is stopped.");
                 }
 
-                archiveHelper = helper ?? new DefaultZipArchiveHelper();
+                archiveHelper = helper ?? new DefaultArchiveHelper();
             }
         }
 
@@ -537,7 +537,7 @@ namespace RFramework
             CancellationToken ct)
         {
             long fileSize = new FileInfo(path).Length;
-            if (!options.ExtractZip)
+            if (!options.ExtractArchive)
             {
                 return new DownloadResult(path, fileSize, resumed, requestCount);
             }
@@ -580,6 +580,8 @@ namespace RFramework
                     temporaryDirectory,
                     new ArchiveExtractionOptions
                     {
+                        Format = options.ArchiveFormat,
+                        Password = options.ArchivePassword,
                         MaxEntries = options.MaxArchiveEntries,
                         MaxExtractedBytes = options.MaxExtractedBytes
                     },
@@ -609,7 +611,7 @@ namespace RFramework
                 RestoreExtractionDirectory(destinationDirectory, temporaryDirectory, backupDirectory, destinationMoved);
                 throw ex is RFrameworkException
                     ? ex
-                    : new RFrameworkException("DownloadModule: ZIP extraction failed.", ex);
+                    : new RFrameworkException("DownloadModule: archive extraction failed.", ex);
             }
             catch
             {
@@ -690,10 +692,10 @@ namespace RFramework
                 throw new RFrameworkException("DownloadModule: numeric options cannot be negative.");
             }
 
-            if (options.ExtractZip && string.IsNullOrWhiteSpace(options.ExtractDirectory))
+            if (options.ExtractArchive && string.IsNullOrWhiteSpace(options.ExtractDirectory))
             {
                 throw new RFrameworkException(
-                    "DownloadModule: ExtractDirectory is required when ExtractZip is enabled.");
+                    "DownloadModule: ExtractDirectory is required when ExtractArchive is enabled.");
             }
         }
 

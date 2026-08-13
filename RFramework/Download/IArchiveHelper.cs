@@ -6,7 +6,7 @@ namespace RFramework
 {
     /// <summary>
     /// 下载模块的压缩文件解压辅助器。
-    /// 可替换为 SharpZipLib 等第三方实现，但实现必须阻止目录穿越并遵守解压限制。
+    /// 可替换为 SharpZipLib、SharpCompress 等第三方实现，但实现必须阻止目录穿越并遵守解压限制。
     /// </summary>
     public interface IArchiveHelper
     {

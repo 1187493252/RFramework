@@ -17,10 +17,10 @@ namespace RFramework
         /// <summary>获取实际执行的 HTTP 请求次数。</summary>
         public int RequestCount { get; }
 
-        /// <summary>获取下载文件是否已完成 ZIP 解压。</summary>
+        /// <summary>获取下载文件是否已完成解压。</summary>
         public bool Extracted { get; }
 
-        /// <summary>获取 ZIP 解压目标目录；未解压时为 null。</summary>
+        /// <summary>获取解压目标目录；未解压时为 null。</summary>
         public string ExtractDirectory { get; }
 
         /// <summary>

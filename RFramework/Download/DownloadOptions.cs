@@ -43,16 +43,22 @@ namespace RFramework
         /// <summary>传递给 WebRequest 并发队列的优先级。</summary>
         public uint Priority { get; set; }
 
-        /// <summary>下载成功后是否将文件按 ZIP 格式解压。</summary>
-        public bool ExtractZip { get; set; }
+        /// <summary>下载成功后是否解压压缩文件。</summary>
+        public bool ExtractArchive { get; set; }
 
-        /// <summary>ZIP 解压目标目录；启用解压时不能为空。</summary>
+        /// <summary>压缩格式；默认由当前解压辅助器根据文件签名自动识别。</summary>
+        public ArchiveFormat ArchiveFormat { get; set; } = ArchiveFormat.Auto;
+
+        /// <summary>压缩文件密码；未加密或不需要密码时为 null。</summary>
+        public string ArchivePassword { get; set; }
+
+        /// <summary>解压目标目录；启用解压时不能为空。</summary>
         public string ExtractDirectory { get; set; }
 
-        /// <summary>解压成功后是否删除下载的 ZIP 文件。</summary>
+        /// <summary>解压成功后是否删除下载的压缩文件。</summary>
         public bool DeleteArchiveAfterExtraction { get; set; }
 
-        /// <summary>允许的 ZIP 最大条目数；0 表示不限制，默认 10000。</summary>
+        /// <summary>允许的最大条目数；0 表示不限制，默认 10000。</summary>
         public int MaxArchiveEntries { get; set; } = 10000;
 
         /// <summary>允许的解压后总字节数；0 表示不限制，默认 8 GiB。</summary>
