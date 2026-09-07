@@ -22,7 +22,7 @@ namespace RFramework
         public static int Count => OrderedModules.Count;
 
         /// <summary>
-        /// 获取指定契约对应的模块；尚未创建时按约定类型名创建。
+        /// 获取指定契约对应的内置模块；尚未创建时通过显式映射创建。
         /// </summary>
         /// <typeparam name="T">模块接口类型。</typeparam>
         /// <returns>模块实例。</returns>
@@ -127,26 +127,32 @@ namespace RFramework
                     $"Module contract '{contractType.FullName}' must follow the IXxx naming convention.");
             }
 
-            string implementationName =
-                $"{contractType.Namespace}.{contractType.Name.Substring(1)}";
-            Type implementationType = Utility.Assembly.GetType(implementationName);
-            if (implementationType == null
-                || !contractType.IsAssignableFrom(implementationType)
-                || !typeof(RFrameworkModule).IsAssignableFrom(implementationType))
-            {
-                throw new RFrameworkException(
-                    $"No valid module implementation was found for '{contractType.FullName}'.");
-            }
-
             try
             {
-                return (RFrameworkModule)Activator.CreateInstance(implementationType);
+                if (contractType == typeof(IAudioModule)) return new AudioModule();
+                if (contractType == typeof(IConfigModule)) return new ConfigModule();
+                if (contractType == typeof(IDownloadModule)) return new DownloadModule();
+                if (contractType == typeof(IEntityModule)) return new EntityModule();
+                if (contractType == typeof(IEventModule)) return new EventModule();
+                if (contractType == typeof(IFsmModule)) return new FsmModule();
+                if (contractType == typeof(ILocalizationModule)) return new LocalizationModule();
+                if (contractType == typeof(INetworkModule)) return new NetworkModule();
+                if (contractType == typeof(IPoolModule)) return new PoolModule();
+                if (contractType == typeof(IProcedureModule)) return new ProcedureModule();
+                if (contractType == typeof(IResourceModule)) return new ResourceModule();
+                if (contractType == typeof(ISceneModule)) return new SceneModule();
+                if (contractType == typeof(ITimerModule)) return new TimerModule();
+                if (contractType == typeof(IUIModule)) return new UIModule();
+                if (contractType == typeof(IWebRequestModule)) return new WebRequestModule();
             }
             catch (Exception ex)
             {
                 throw new RFrameworkException(
-                    $"Module '{implementationType.FullName}' could not be created.", ex);
+                    $"Module '{contractType.FullName}' could not be created.", ex);
             }
+
+            throw new RFrameworkException(
+                $"No valid module implementation was found for '{contractType.FullName}'.");
         }
 
         private static int CompareModules(RFrameworkModule left, RFrameworkModule right)
