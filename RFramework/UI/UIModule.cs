@@ -1,16 +1,13 @@
 using System;
 using System.Collections.Generic;
+using System.Runtime.ExceptionServices;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace RFramework
 {
     /// <summary>
-    /// UI 模块核心实现。融合 GF UIManager 和 UniWindow 的设计：
-    /// - 单一窗口栈 + 层级排序（参考 UniWindow）
-    /// - FullScreen 自动隐藏被覆盖窗口
-    /// - 对象池复用 UI 实例
-    /// - Task 异步加载
+    /// UI 模块核心实现。维护单一窗口栈、层级排序、全屏遮挡和异步加载生命周期。
     /// </summary>
     internal sealed class UIModule : RFrameworkModule, IUIModule
     {
@@ -30,11 +27,6 @@ namespace RFramework
         private IEventModule eventModule;
 
         /// <summary>
-        /// 对象池模块引用。
-        /// </summary>
-        private IPoolModule poolModule;
-
-        /// <summary>
         /// 窗口栈（按层级排序存储）。
         /// </summary>
         private readonly List<IUIForm> windowStack = new List<IUIForm>();
@@ -44,8 +36,9 @@ namespace RFramework
         /// </summary>
         private readonly Dictionary<string, IUIForm> uiForms = new Dictionary<string, IUIForm>();
 
-        // Keep the ResourceModule reference alongside the instantiated form. The form handle alone
-        // is insufficient to return the asset reference when the form is closed.
+        /// <summary>
+        /// 框架加载并持有的 UI 资源。关闭窗口时按资源名称归还对应引用。
+        /// </summary>
         private readonly Dictionary<string, object> uiAssets = new Dictionary<string, object>();
 
         /// <summary>
@@ -100,11 +93,10 @@ namespace RFramework
         /// <summary>
         /// 设置依赖模块引用。
         /// </summary>
-        public void SetDependencies(IResourceModule resourceModule, IEventModule eventModule, IPoolModule poolModule)
+        public void SetDependencies(IResourceModule resourceModule, IEventModule eventModule)
         {
             this.resourceModule = resourceModule;
             this.eventModule = eventModule;
-            this.poolModule = poolModule;
         }
 
         /// <summary>
@@ -331,33 +323,42 @@ namespace RFramework
 
             bool isExternal = externalUIForms.Remove(assetName);
 
-            // 生命周期：OnClose
-            uiForm.OnClose(userData);
-
-            // 从字典和栈中移除
-            uiForms.Remove(assetName);
-            windowStack.Remove(uiForm);
-
-            pausedUIForms.Remove(uiForm);
-
-            // 外部 UI 由场景或业务代码持有，模块只注销，不释放实例和资源。
-            if (!isExternal)
+            Exception closeFailure = null;
+            try
             {
-                object uiInstance = uiForm.Handle;
-                uiHelper.ReleaseUI(uiInstance);
-                if (uiAssets.TryGetValue(assetName, out object uiAsset))
-                {
-                    uiAssets.Remove(assetName);
-                    resourceModule.UnloadAsset<object>(assetName);
-                }
+                uiForm.OnClose(userData);
             }
+            catch (Exception ex)
+            {
+                closeFailure = ex;
+            }
+            finally
+            {
+                uiForms.Remove(assetName);
+                windowStack.Remove(uiForm);
+                pausedUIForms.Remove(uiForm);
 
-            // 恢复被覆盖窗口的可见性
-            ApplyFullScreenVisibility();
+                // 外部 UI 由场景或业务代码持有，模块只注销，不释放实例和资源。
+                if (!isExternal)
+                {
+                    uiHelper.ReleaseUI(uiForm.Handle);
+                    if (uiAssets.Remove(assetName))
+                    {
+                        resourceModule.UnloadAsset<object>(assetName);
+                    }
+                }
+
+                ApplyFullScreenVisibility();
+            }
 
             if (eventModule != null)
             {
                 eventModule.FireSafely(new CloseUIFormCompleteEvent(assetName, userData));
+            }
+
+            if (closeFailure != null)
+            {
+                ExceptionDispatchInfo.Capture(closeFailure).Throw();
             }
         }
 
@@ -366,36 +367,35 @@ namespace RFramework
         /// </summary>
         public void CloseAllUIForms(object userData = null)
         {
-            // Keep loading entries until their continuations observe this
-            // marker. Clearing the set would allow a late load to reopen UI
-            // after this bulk-close operation has completed.
+            // 保留加载记录，直到异步续体消费取消标记，避免迟到的加载重新打开窗口。
             foreach (string assetName in loadingUIForms)
             {
                 abortedUIForms.Add(assetName);
             }
 
-            // 倒序关闭（从栈顶开始）
-            for (int i = windowStack.Count - 1; i >= 0; i--)
+            Exception firstFailure = null;
+            while (windowStack.Count > 0)
             {
-                IUIForm uiForm = windowStack[i];
-                uiForm.OnClose(userData);
-                if (!externalUIForms.Contains(uiForm.AssetName))
+                string assetName = windowStack[windowStack.Count - 1].AssetName;
+                try
                 {
-                    uiHelper.ReleaseUI(uiForm.Handle);
+                    CloseUIForm(assetName, userData);
                 }
-
-                pausedUIForms.Remove(uiForm);
-            }
-
-            foreach (KeyValuePair<string, object> uiAsset in uiAssets)
-            {
-                resourceModule.UnloadAsset<object>(uiAsset.Key);
+                catch (Exception ex)
+                {
+                    firstFailure ??= ex;
+                }
             }
 
             windowStack.Clear();
             uiForms.Clear();
             uiAssets.Clear();
             externalUIForms.Clear();
+
+            if (firstFailure != null)
+            {
+                ExceptionDispatchInfo.Capture(firstFailure).Throw();
+            }
         }
 
         /// <summary>
@@ -417,6 +417,29 @@ namespace RFramework
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// 获取当前窗口栈顶的 UI。
+        /// </summary>
+        public IUIForm GetTopUIForm()
+        {
+            return windowStack.Count > 0 ? windowStack[windowStack.Count - 1] : null;
+        }
+
+        /// <summary>
+        /// 关闭当前窗口栈顶的 UI。
+        /// </summary>
+        public bool CloseTopUIForm(object userData = null)
+        {
+            IUIForm topUIForm = GetTopUIForm();
+            if (topUIForm == null)
+            {
+                return false;
+            }
+
+            CloseUIForm(topUIForm.AssetName, userData);
+            return true;
         }
 
         /// <summary>
@@ -479,7 +502,7 @@ namespace RFramework
         }
 
         /// <summary>
-        /// 应用全屏窗口可见性规则（参考 UniWindow.OnSetWindowVisible）。
+        /// 应用全屏窗口可见性规则。
         /// 从栈顶往下扫描，遇到 FullScreen 窗口后将其余窗口设为暂停。
         /// </summary>
         private void ApplyFullScreenVisibility()
@@ -489,13 +512,6 @@ namespace RFramework
             for (int i = windowStack.Count - 1; i >= 0; i--)
             {
                 IUIForm uiForm = windowStack[i];
-
-                if (uiForm.FullScreen && !shouldPause)
-                {
-                    // 第一个全屏窗口：自身可见，后续窗口暂停
-                    shouldPause = true;
-                    continue;
-                }
 
                 if (shouldPause)
                 {
@@ -507,9 +523,12 @@ namespace RFramework
                 }
                 else if (pausedUIForms.Remove(uiForm))
                 {
-                    // Only resume forms that were actually paused by this module.
+                    // 只恢复确实由本模块暂停过的窗口。
                     uiForm.OnResume();
                 }
+
+                // 先恢复当前窗口，再让其全屏标记影响后续下层窗口。
+                shouldPause |= uiForm.FullScreen;
             }
         }
 

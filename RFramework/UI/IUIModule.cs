@@ -5,11 +5,7 @@ using System.Threading.Tasks;
 namespace RFramework
 {
     /// <summary>
-    /// UI 模块接口。融合 GF 蓝本和 UniWindow 精简设计：
-    /// - 不用 IUIGroup，窗口通过属性声明层级（参考 UniWindow [WindowLayer]）
-    /// - FullScreen 标志自动隐藏被覆盖窗口
-    /// - Task 异步替代 GF 回调
-    /// - IEventModule.Fire 替代 C# event
+    /// UI 模块接口。负责窗口异步加载、生命周期、层级与全屏遮挡管理。
     /// </summary>
     public interface IUIModule
     {
@@ -21,7 +17,7 @@ namespace RFramework
         /// <summary>
         /// 设置依赖模块引用（由 UIComponent 在 Awake 中注入）。
         /// </summary>
-        void SetDependencies(IResourceModule resourceModule, IEventModule eventModule, IPoolModule poolModule);
+        void SetDependencies(IResourceModule resourceModule, IEventModule eventModule);
 
         /// <summary>
         /// 设置 UI 辅助器。
@@ -80,6 +76,18 @@ namespace RFramework
         /// 获取 UI 表单。
         /// </summary>
         IUIForm GetUIForm(string assetName);
+
+        /// <summary>
+        /// 获取当前窗口栈顶的 UI；没有已打开窗口时返回 null。
+        /// </summary>
+        IUIForm GetTopUIForm();
+
+        /// <summary>
+        /// 关闭当前窗口栈顶的 UI，并恢复其下方窗口。
+        /// </summary>
+        /// <param name="userData">用户自定义数据。</param>
+        /// <returns>成功关闭返回 true；没有已打开窗口时返回 false。</returns>
+        bool CloseTopUIForm(object userData = null);
 
         /// <summary>
         /// 获取所有已打开的 UI。
